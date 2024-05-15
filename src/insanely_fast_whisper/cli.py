@@ -6,6 +6,7 @@ import torch
 
 from .utils.diarization_pipeline import diarize
 from .utils.result import build_result
+from .utils.openai_api import get_asr_from_openai
 
 parser = argparse.ArgumentParser(description="Automatic Speech Recognition")
 parser.add_argument(
@@ -31,7 +32,7 @@ parser.add_argument(
 parser.add_argument(
     "--model-name",
     required=False,
-    default="openai/whisper-large-v3",
+    default="whisper-1",
     type=str,
     help="Name of the pretrained model/ checkpoint to perform ASR. (default: openai/whisper-large-v3)",
 )
@@ -78,6 +79,13 @@ parser.add_argument(
     default="no_token",
     type=str,
     help="Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips",
+)
+parser.add_argument(
+    "--openai-api-key",
+    required=False,
+    default="no_token",
+    type=str,
+    help="Provide OpenAI API key to use OpenAI's hosted ASR model",
 )
 parser.add_argument(
     "--diarization_model",
@@ -127,42 +135,48 @@ def main():
         if args.min_speakers > args.max_speakers:
             parser.error("--min-speakers cannot be greater than --max-speakers.")
 
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model=args.model_name,
-        torch_dtype=torch.float16,
-        device="mps" if args.device_id == "mps" else f"cuda:{args.device_id}",
-        model_kwargs={"attn_implementation": "flash_attention_2"} if args.flash else {"attn_implementation": "sdpa"},
-    )
-
-    if args.device_id == "mps":
-        torch.mps.empty_cache()
-    # elif not args.flash:
-        # pipe.model = pipe.model.to_bettertransformer()
-
-    ts = "word" if args.timestamp == "word" else True
-
-    language = None if args.language == "None" else args.language
-
-    generate_kwargs = {"task": args.task, "language": language}
-
-    if args.model_name.split(".")[-1] == "en":
-        generate_kwargs.pop("task")
-
-    with Progress(
-        TextColumn("🤗 [progress.description]{task.description}"),
-        BarColumn(style="yellow1", pulse_style="white"),
-        TimeElapsedColumn(),
-    ) as progress:
-        progress.add_task("[yellow]Transcribing...", total=None)
-
-        outputs = pipe(
-            args.file_name,
-            chunk_length_s=30,
-            batch_size=args.batch_size,
-            generate_kwargs=generate_kwargs,
-            return_timestamps=ts,
+    if args.model_name=="whisper-1" and args.openai_api_key!="no_token":
+        print(f"Using {args.model_name=} and making API call, this might take sometime...")
+        outputs = get_asr_from_openai(args.openai_api_key, args.file_name)
+    elif args.model_name=="whisper-1" and args.openai_api_key=="no_token":
+        raise KeyError("Please provide OpenAI Key!")
+    else:
+        pipe = pipeline(
+            "automatic-speech-recognition",
+            model=args.model_name,
+            torch_dtype=torch.float16,
+            device="mps" if args.device_id == "mps" else f"cuda:{args.device_id}",
+            model_kwargs={"attn_implementation": "flash_attention_2"} if args.flash else {"attn_implementation": "sdpa"},
         )
+
+        if args.device_id == "mps":
+            torch.mps.empty_cache()
+        # elif not args.flash:
+            # pipe.model = pipe.model.to_bettertransformer()
+
+        ts = "word" if args.timestamp == "word" else True
+
+        language = None if args.language == "None" else args.language
+
+        generate_kwargs = {"task": args.task, "language": language}
+
+        if args.model_name.split(".")[-1] == "en":
+            generate_kwargs.pop("task")
+
+        with Progress(
+            TextColumn("🤗 [progress.description]{task.description}"),
+            BarColumn(style="yellow1", pulse_style="white"),
+            TimeElapsedColumn(),
+        ) as progress:
+            progress.add_task("[yellow]Transcribing...", total=None)
+
+            outputs = pipe(
+                args.file_name,
+                chunk_length_s=30,
+                batch_size=args.batch_size,
+                generate_kwargs=generate_kwargs,
+                return_timestamps=ts,
+            )
 
     if args.hf_token != "no_token":
         speakers_transcript = diarize(args, outputs)

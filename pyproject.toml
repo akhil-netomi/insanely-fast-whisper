@@ -13,6 +13,7 @@ dependencies = [
     "pyannote-audio>=3.1.0",
     "setuptools>=68.2.2",
     "rich>=13.7.0",
+    "openai"
 ]
 requires-python = ">=3.8,<3.12"
 readme = "README.md"
